@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 
 # --- BEÁLLÍTÁSOK ---
-JELSZO = st.secrets["app_jelszo"]
+JELSZO = st.secrets["portfolio_jelszo"]
 HOLDINGS = st.secrets["darabszamok"]
 
 st.set_page_config(page_title="PORTFÓLIÓ KEZELŐ", layout="wide")
