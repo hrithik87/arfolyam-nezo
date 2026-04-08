@@ -29,7 +29,7 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 with st.sidebar:
-    st.title("Biztonsági Kapu")
+    st.title("Azonosítás")
     pw = st.text_input("Jelszó", type="password")
     if st.button("Belépés"):
         if pw == JELSZO:
@@ -101,7 +101,13 @@ def get_all_crypto():
     ids = "bitcoin,ethereum,solana,hyperliquid,chainlink,sui,bittensor,pump-fun,jupiter-perpetuals-liquidity-provider-token,jupiter-exchange-solana,pudgy-penguins"
     url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={ids}&price_change_percentage=24h,7d,30d"
     try:
-        data = requests.get(url).json()
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        resp = requests.get(url, headers=headers)
+        
+        if resp.status_code != 200:
+            return {"API_HIBA": True}
+            
+        data = resp.json()
         output = {}
         for c in data:
             sym = c['symbol'].upper()
@@ -116,7 +122,10 @@ st.title("FONTOSABB ÁRFOLYAMOK")
 # 1. Crypto
 st.header("Crypto")
 c_raw = get_all_crypto()
-if c_raw:
+
+if c_raw and "API_HIBA" in c_raw:
+    st.warning("A CoinGecko ideiglenesen blokkolta a lekérést (Rate limit). Nézz vissza 10 perc múlva!")
+elif c_raw:
     df_c = pd.DataFrame(c_raw).T
     df_c = df_c[["Price", "24h", "7d", "30d", "YTD"]]
     display_df = df_c.copy().astype(object)
