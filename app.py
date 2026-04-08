@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 
 # --- BEÁLLÍTÁSOK ---
-JELSZO = "kutyajelszo" 
+JELSZO = st.secrets["app_jelszo"] 
 
 st.set_page_config(page_title="FONTOSABB ÁRFOLYAMOK", layout="wide")
 
