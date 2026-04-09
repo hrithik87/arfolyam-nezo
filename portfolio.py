@@ -2,6 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
+import numpy as np
 
 # --- BEÁLLÍTÁSOK ---
 JELSZO = st.secrets["portfolio_jelszo"]
@@ -9,7 +11,6 @@ HOLDINGS = st.secrets["darabszamok"]
 
 st.set_page_config(page_title="PORTFÓLIÓ KEZELŐ", layout="wide")
 
-# Nincs szükség egyedi táblázat CSS-re, mert áttérünk a modern st.dataframe-re
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
@@ -30,7 +31,6 @@ if not st.session_state.auth:
 # --- ADATLEKÉRDEZÉS ---
 @st.cache_data(ttl=600)
 def fetch_global_data():
-    # Globális devizák és indexek lekérése egy csomagban
     tickers = ["EURHUF=X", "USDHUF=X", "EURUSD=X", "^GSPC", "^IXIC", "^RUT"]
     data = {}
     for t in tickers:
@@ -45,11 +45,12 @@ def fetch_global_data():
             data[t] = {"price": 0, "chg": 0}
     return data
 
-@st.cache_data(ttl=600)
-def fetch_asset_data(ticker):
+@st.cache_data(ttl=1200) # Hosszabb cache a nagy adathalmaz miatt
+def fetch_asset_history(ticker):
     try:
         t = yf.Ticker(ticker)
-        hist = t.history(period="1mo")
+        # 1 éves adat a történelmi charthoz és YTD-hez
+        hist = t.history(period="1y")
         if hist.empty: return None
         
         if isinstance(hist.columns, pd.MultiIndex):
@@ -58,108 +59,165 @@ def fetch_asset_data(ticker):
             prices = hist['Close'].dropna()
             
         if len(prices) < 2: return None
-        
-        # Valós Yahoo Finance név és 52 hetes mélypont lekérése
+
         info = t.info
         name = info.get('shortName', info.get('longName', ticker))
         mcap = info.get('marketCap', info.get('totalAssets', 0))
         low52 = info.get('fiftyTwoWeekLow', 0)
-            
+
+        # Időszaki árak kiszámítása
+        curr_price = float(prices.iloc[-1])
+        prev_price = float(prices.iloc[-2])
+        
+        price_7d = float(prices.iloc[-7]) if len(prices) >= 7 else float(prices.iloc[0])
+        price_30d = float(prices.iloc[-30]) if len(prices) >= 30 else float(prices.iloc[0])
+        
+        # YTD ár keresése (év első kereskedési napja)
+        current_year = datetime.now().year
+        ytd_prices = prices[prices.index.year == current_year]
+        price_ytd = float(ytd_prices.iloc[0]) if not ytd_prices.empty else float(prices.iloc[0])
+
         return {
-            "price": float(prices.iloc[-1]),
-            "prev": float(prices.iloc[-2]),
             "name": name,
+            "prices_series": prices, # A teljes 1 éves adatsor
+            "curr": curr_price,
+            "prev": prev_price,
+            "p_7d": price_7d,
+            "p_30d": price_30d,
+            "p_ytd": price_ytd,
             "mcap": mcap if mcap else 0,
             "low52": low52 if low52 else 0
         }
     except: return None
 
+# --- NÉV CSERÉK ---
+RENAME_MAP = {
+    "VWCE.DE": "Vanguard FTSE All-World UCITS ETF",
+    "ZPRV.DE": "iShares MSCI USA Small Cap Value Factor UCITS ETF",
+    "IUSN.DE": "iShares MSCI World Small Cap UCITS ETF",
+    "CBTC.DE": "21Shares Core Bitcoin ETP"
+}
+
 # --- FŐOLDAL ---
 st.title("SAJÁT PORTFÓLIÓ")
 
-with st.spinner("Piac szinkronizálása..."):
+with st.spinner("Piac szinkronizálása és történelmi adatok letöltése..."):
     glob = fetch_global_data()
-    
     eur_huf = glob.get("EURHUF=X", {}).get("price", 395.0)
     usd_huf = glob.get("USDHUF=X", {}).get("price", 365.0)
     eur_usd = glob.get("EURUSD=X", {}).get("price", 1.08)
-
     sp_chg = glob.get("^GSPC", {}).get("chg", 0)
     ndq_chg = glob.get("^IXIC", {}).get("chg", 0)
     rut_chg = glob.get("^RUT", {}).get("chg", 0)
 
-    def col_val(v):
-        return "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#aaa"
+    def col_val(v): return "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#aaa"
 
-    # Felső szürke box az indexekkel és devizákkal
     st.markdown(f"""
     <div style="background-color: #1e1e1e; padding: 15px 25px; border-radius: 10px; border: 1px solid #444; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 30px; align-items: center; justify-content: space-around;">
-        <div style="text-align: center;">
-            <div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">EUR/HUF</div>
-            <div style="font-size: 18px; font-weight: bold;">{eur_huf:,.2f} Ft</div>
-        </div>
-        <div style="text-align: center;">
-            <div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">USD/HUF</div>
-            <div style="font-size: 18px; font-weight: bold;">{usd_huf:,.2f} Ft</div>
-        </div>
+        <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">EUR/HUF</div><div style="font-size: 18px; font-weight: bold;">{eur_huf:,.2f} Ft</div></div>
+        <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">USD/HUF</div><div style="font-size: 18px; font-weight: bold;">{usd_huf:,.2f} Ft</div></div>
         <div style="border-left: 1px solid #444; height: 40px;"></div>
-        <div style="text-align: center;">
-            <div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">S&P 500</div>
-            <div style="font-size: 18px; font-weight: bold; color: {col_val(sp_chg)};">{sp_chg:+.2f}%</div>
-        </div>
-        <div style="text-align: center;">
-            <div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">Nasdaq</div>
-            <div style="font-size: 18px; font-weight: bold; color: {col_val(ndq_chg)};">{ndq_chg:+.2f}%</div>
-        </div>
-        <div style="text-align: center;">
-            <div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">Russell 2000</div>
-            <div style="font-size: 18px; font-weight: bold; color: {col_val(rut_chg)};">{rut_chg:+.2f}%</div>
-        </div>
+        <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">S&P 500</div><div style="font-size: 18px; font-weight: bold; color: {col_val(sp_chg)};">{sp_chg:+.2f}%</div></div>
+        <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">Nasdaq</div><div style="font-size: 18px; font-weight: bold; color: {col_val(ndq_chg)};">{ndq_chg:+.2f}%</div></div>
+        <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">Russell 2000</div><div style="font-size: 18px; font-weight: bold; color: {col_val(rut_chg)};">{rut_chg:+.2f}%</div></div>
     </div>
     """.replace(",", " "), unsafe_allow_html=True)
 
     rows = []
-    total_usd = 0
+    
+    # Portfólió szintű aggregált értékekhez
+    tot_usd_now = 0
+    tot_usd_prev = 0
+    tot_usd_7d = 0
+    tot_usd_30d = 0
+    tot_usd_ytd = 0
+    
+    # DataFrame a történelmi charthoz
+    portfolio_history = pd.DataFrame()
 
     for ticker, db in HOLDINGS.items():
         if db <= 0: continue
-        data = fetch_asset_data(ticker)
+        data = fetch_asset_history(ticker)
         if data:
-            curr = data["price"]
-            chg = ((curr - data["prev"]) / data["prev"]) * 100
             is_eur = ticker.endswith(".DE")
-            p_usd = curr * eur_usd if is_eur else curr
-            val_usd = p_usd * db
-            total_usd += val_usd
+            multiplier = eur_usd if is_eur else 1.0
             
+            curr_val = data["curr"] * multiplier * db
+            prev_val = data["prev"] * multiplier * db
+            v_7d = data["p_7d"] * multiplier * db
+            v_30d = data["p_30d"] * multiplier * db
+            v_ytd = data["p_ytd"] * multiplier * db
+            
+            tot_usd_now += curr_val
+            tot_usd_prev += prev_val
+            tot_usd_7d += v_7d
+            tot_usd_30d += v_30d
+            tot_usd_ytd += v_ytd
+            
+            # Idősoros érték a portfólió charthoz
+            asset_history_usd = data["prices_series"] * multiplier * db
+            if portfolio_history.empty:
+                portfolio_history = asset_history_usd.to_frame(name=ticker)
+            else:
+                portfolio_history = portfolio_history.join(asset_history_usd.rename(ticker), how='outer')
+
+            final_name = RENAME_MAP.get(ticker, data["name"])
+
+            # 7 napos adatsor a sparkline-hoz
+            sparkline_data = data["prices_series"].tail(7).tolist()
+
             rows.append({
-                "Név": data["name"],
+                "Név": final_name,
                 "Ticker": ticker,
                 "Darab": db,
-                "Árfolyam": curr,
+                "Árfolyam": data["curr"],
                 "is_eur": is_eur,
                 "52w low": data["low52"],
                 "Market cap": data["mcap"],
-                "USD érték": val_usd,
-                "HUF érték": val_usd * usd_huf,
-                "Napi vált. %": chg
+                "USD érték": curr_val,
+                "Napi vált. %": ((curr_val - prev_val) / prev_val) * 100 if prev_val else 0,
+                "Napi vált. USD": curr_val - prev_val,
+                "7d %": ((curr_val - v_7d) / v_7d) * 100 if v_7d else 0,
+                "7d USD": curr_val - v_7d,
+                "30d %": ((curr_val - v_30d) / v_30d) * 100 if v_30d else 0,
+                "30d USD": curr_val - v_30d,
+                "YTD %": ((curr_val - v_ytd) / v_ytd) * 100 if v_ytd else 0,
+                "YTD USD": curr_val - v_ytd,
+                "7d Chart": sparkline_data
             })
 
-# --- MEGJELENÍTÉS ÉS FORMÁZÁS ---
+# --- MEGJELENÍTÉS ---
 if rows:
     df = pd.DataFrame(rows)
-    df["Portfólió hányad"] = (df["USD érték"] / total_usd) * 100 if total_usd > 0 else 0
-    
-    # Fő Érték doboz (nyilacska nélkül, egyedi dizájnnal)
+    df["Portfólió hányad"] = (df["USD érték"] / tot_usd_now) * 100 if tot_usd_now > 0 else 0
+
+    # Teljes portfólió metrikák
+    pf_chg_day_pct = ((tot_usd_now - tot_usd_prev) / tot_usd_prev) * 100 if tot_usd_prev else 0
+    pf_chg_day_usd = tot_usd_now - tot_usd_prev
+    pf_chg_7d_pct = ((tot_usd_now - tot_usd_7d) / tot_usd_7d) * 100 if tot_usd_7d else 0
+    pf_chg_7d_usd = tot_usd_now - tot_usd_7d
+    pf_chg_30d_pct = ((tot_usd_now - tot_usd_30d) / tot_usd_30d) * 100 if tot_usd_30d else 0
+    pf_chg_30d_usd = tot_usd_now - tot_usd_30d
+    pf_chg_ytd_pct = ((tot_usd_now - tot_usd_ytd) / tot_usd_ytd) * 100 if tot_usd_ytd else 0
+    pf_chg_ytd_usd = tot_usd_now - tot_usd_ytd
+
+    def fmt_c(v): return "green" if v > 0 else "red" if v < 0 else "gray"
+
     st.markdown(f"""
     <div style="background-color: #1e1e1e; padding: 25px; border-radius: 10px; border: 1px solid #444; margin-bottom: 30px;">
         <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">Érték</div>
-        <div style="font-size: 42px; font-weight: bold;">${total_usd:,.0f}</div>
-        <div style="color: #ccc; font-size: 20px; margin-top: 5px;">{(total_usd * usd_huf):,.0f} Ft</div>
+        <div style="font-size: 42px; font-weight: bold;">${tot_usd_now:,.0f}</div>
+        <div style="color: #ccc; font-size: 20px; margin-top: 5px; margin-bottom: 15px;">{(tot_usd_now * usd_huf):,.0f} Ft</div>
+        <div style="display: flex; gap: 20px; font-size: 14px;">
+            <div>Napi: <span style="color:{fmt_c(pf_chg_day_pct)};">{pf_chg_day_pct:+.2f}%</span> (<span style="color:{fmt_c(pf_chg_day_usd)};">${pf_chg_day_usd:+,.0f}</span>)</div>
+            <div>7d: <span style="color:{fmt_c(pf_chg_7d_pct)};">{pf_chg_7d_pct:+.2f}%</span> (<span style="color:{fmt_c(pf_chg_7d_usd)};">${pf_chg_7d_usd:+,.0f}</span>)</div>
+            <div>30d: <span style="color:{fmt_c(pf_chg_30d_pct)};">{pf_chg_30d_pct:+.2f}%</span> (<span style="color:{fmt_c(pf_chg_30d_usd)};">${pf_chg_30d_usd:+,.0f}</span>)</div>
+            <div>YTD: <span style="color:{fmt_c(pf_chg_ytd_pct)};">{pf_chg_ytd_pct:+.2f}%</span> (<span style="color:{fmt_c(pf_chg_ytd_usd)};">${pf_chg_ytd_usd:+,.0f}</span>)</div>
+        </div>
     </div>
     """.replace(",", " "), unsafe_allow_html=True)
 
-    # Megjelenítendő adatkeret összerakása
+    # Táblázat előkészítése
     disp = pd.DataFrame()
     disp["Név"] = df["Név"]
     disp["Ticker"] = df["Ticker"]
@@ -167,38 +225,76 @@ if rows:
     disp["Árfolyam"] = df.apply(lambda r: f"{'€' if r['is_eur'] else '$'}{r['Árfolyam']:,.2f}".replace(",", " "), axis=1)
     disp["52w low"] = df.apply(lambda r: f"{'€' if r['is_eur'] else '$'}{r['52w low']:,.2f}".replace(",", " ") if r['52w low'] > 0 else "-", axis=1)
     disp["Market cap"] = df["Market cap"].apply(lambda x: f"${x/1e12:,.2f}T".replace(",", " ") if x >= 1e12 else (f"${x/1e9:,.2f}B".replace(",", " ") if x >= 1e8 else "-"))
-    
-    # Ezek az oszlopok tiszta számok maradnak a háttérben, hogy a fejléc-kattintásos rendezés tökéletesen működjön matematikailag
     disp["USD érték"] = df["USD érték"]
-    disp["HUF érték"] = df["HUF érték"]
     disp["Portfólió hányad"] = df["Portfólió hányad"]
+    
     disp["Napi vált. %"] = df["Napi vált. %"]
+    disp["Napi vált. USD"] = df["Napi vált. USD"]
+    disp["7d %"] = df["7d %"]
+    disp["7d USD"] = df["7d USD"]
+    disp["30d %"] = df["30d %"]
+    disp["30d USD"] = df["30d USD"]
+    disp["YTD %"] = df["YTD %"]
+    disp["YTD USD"] = df["YTD USD"]
+    
+    # Sparkline adat beszúrása
+    disp["7d Chart"] = df["7d Chart"]
 
-    # Szóközös formázás az élő (rendezhető) szám oszlopokra
-    formatters = {
-        "USD érték": lambda x: f"${x:,.2f}".replace(",", " "),
-        "HUF érték": lambda x: f"{x:,.0f} Ft".replace(",", " "),
-        "Portfólió hányad": lambda x: f"{x:,.2f}%".replace(",", " "),
-        "Napi vált. %": lambda x: f"{x:+.2f}%".replace(",", " ")
+    # Formázók az st.dataframe-hez
+    format_dict = {
+        "USD érték": st.column_config.NumberColumn("USD érték", format="$ %.2f"),
+        "Portfólió hányad": st.column_config.NumberColumn("Portfólió hányad", format="%.2f %%"),
+        "Napi vált. %": st.column_config.NumberColumn("Napi vált. %", format="%+.2f %%"),
+        "Napi vált. USD": st.column_config.NumberColumn("Napi vált. USD", format="$ %+.2f"),
+        "7d %": st.column_config.NumberColumn("7d %", format="%+.2f %%"),
+        "7d USD": st.column_config.NumberColumn("7d USD", format="$ %+.2f"),
+        "30d %": st.column_config.NumberColumn("30d %", format="%+.2f %%"),
+        "30d USD": st.column_config.NumberColumn("30d USD", format="$ %+.2f"),
+        "YTD %": st.column_config.NumberColumn("YTD %", format="%+.2f %%"),
+        "YTD USD": st.column_config.NumberColumn("YTD USD", format="$ %+.2f"),
+        "7d Chart": st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
     }
 
-    def style_diff(v):
-        color = '#27ae60' if v > 0 else '#e74c3c' if v < 0 else 'white'
-        return f'color: {color}; font-weight: bold;'
+    # Megjelenítés
+    st.dataframe(disp, use_container_width=True, hide_index=True, column_config=format_dict, height=None) # height=None engedi a teljes listát
 
-    # A st.dataframe alapból egységes, sűrűbb sormagasságot ad, és a fejlécre kattintva rendezhető
-    styled_df = disp.style.format(formatters).map(style_diff, subset=["Napi vált. %"])
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    # --- HISTORICAL CHART ---
+    st.markdown("---")
+    st.subheader("Portfólió teljes éves eredménye, USD")
+    if not portfolio_history.empty:
+        portfolio_history.ffill(inplace=True) # Üres napok kitöltése előző értékkel
+        total_history = portfolio_history.sum(axis=1) # Sorok összeadása
+        
+        # Plotly chart készítése
+        fig_hist = px.line(x=total_history.index, y=total_history.values, 
+                           labels={'x': 'Dátum', 'y': 'Érték (USD)'})
+        fig_hist.update_traces(line_color='#27ae60')
+        fig_hist.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                               xaxis_title="", yaxis_title="USD",
+                               hovermode="x unified")
+        # Interaktív időablak választó
+        fig_hist.update_xaxes(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=3, label="3m", step="month", stepmode="backward"),
+                    dict(count=6, label="6m", step="month", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year", stepmode="todate"),
+                    dict(count=1, label="1y", step="year", stepmode="backward"),
+                    dict(step="all")
+                ])
+            )
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- TORTADIAGRAM ---
+    # --- TORTADIAGRAM (Visszaállítva) ---
     st.markdown("---")
     st.subheader("Portfólió diagram")
-    
-    fig = px.pie(df, values='USD érték', names='Ticker', color_discrete_sequence=px.colors.qualitative.Pastel)
-    # Címkék a körön kívülre, vonalkákkal
-    fig.update_traces(textinfo='label+percent', textposition='outside', marker=dict(line=dict(color='#000000', width=1)))
-    fig.update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=40, b=40, l=40, r=40))
-    st.plotly_chart(fig, use_container_width=True)
+    fig_pie = px.pie(df, values='USD érték', names='Ticker', color_discrete_sequence=px.colors.qualitative.Pastel)
+    # Visszaállítva a vonalas, külső feliratos stílusra
+    fig_pie.update_traces(textinfo='label+percent', textposition='outside', marker=dict(line=dict(color='#000000', width=1)))
+    fig_pie.update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 else:
-    st.info("Nincs megjeleníthető adat. Ellenőrizd a darabszámokat a Secrets-ben!")
+    st.info("Nincs megjeleníthető adat.")
