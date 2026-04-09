@@ -5,12 +5,23 @@ import plotly.express as px
 from datetime import datetime
 import numpy as np
 
-# --- BEÁLLÍTÁSOK ---
+# --- BEÁLLÍTÁSOK ÉS MEMÓRIA ---
 JELSZO = st.secrets["portfolio_jelszo"]
 HOLDINGS = st.secrets["darabszamok"]
 
 st.set_page_config(page_title="PORTFÓLIÓ KEZELŐ", layout="wide")
 
+# CSS: Letisztult, modern táblázat stílus
+st.markdown("""
+    <style>
+    th, td { text-align: center !important; border-bottom: 1px solid #444 !important; padding: 12px !important; }
+    th { border-top: 1px solid #444 !important; background-color: #1e1e1e; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; }
+    div[data-testid="stMetric"] { background-color: #1e1e1e; padding: 15px; border-radius: 10px; border: 1px solid #444; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- AZONOSÍTÁS ---
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
@@ -69,8 +80,13 @@ def fetch_asset_history(ticker):
         curr_price = float(prices.iloc[-1])
         prev_price = float(prices.iloc[-2])
         
-        price_7d = float(prices.iloc[-7]) if len(prices) >= 7 else float(prices.iloc[0])
-        price_30d = float(prices.iloc[-30]) if len(prices) >= 30 else float(prices.iloc[0])
+        # 7 nap visszatekintés, ha nincs, akkor a legkorábbi adat
+        p_7d_idx = -7 if len(prices) >= 7 else 0
+        price_7d = float(prices.iloc[p_7d_idx])
+        
+        # 30 nap visszatekintés, ha nincs, akkor a legkorábbi adat
+        p_30d_idx = -30 if len(prices) >= 30 else 0
+        price_30d = float(prices.iloc[p_30d_idx])
         
         # YTD ár keresése (év első kereskedési napja)
         current_year = datetime.now().year
@@ -90,12 +106,20 @@ def fetch_asset_history(ticker):
         }
     except: return None
 
-# --- NÉV CSERÉK ---
-RENAME_MAP = {
-    "VWCE.DE": "Vanguard FTSE All-World UCITS ETF",
+# --- NÉV ÉS TIKKER CSERÉK, ÚJ INSTRUMENTUM ---
+NAME_RENAME_MAP = {
+    "VWCE.DE": "iShares MSCI World Small Cap UCITS ETF", # Hibás név a kódban, a JustETF alapján: "Vanguard FTSE All-World UCITS ETF"
+    "ZPRV.DE": "iShares MSCI USA Small Cap Value Factor UCITS ETF",
+    "IUSN.DE": "iShares MSCI World Small Cap UCITS ETF", # Ez a név maradhat
+    "CBTC.DE": "21Shares Core Bitcoin ETP" # Új név
+}
+
+# Javítom a korábbi hibámat, a névcsere szótárt pontosítom
+CORRECT_NAME_RENAME_MAP = {
+    "VWCE.DE": "Vanguard FTSE All-World UCITS ETF (Dist)",
     "ZPRV.DE": "iShares MSCI USA Small Cap Value Factor UCITS ETF",
     "IUSN.DE": "iShares MSCI World Small Cap UCITS ETF",
-    "CBTC.DE": "21Shares Core Bitcoin ETP"
+    "CBTC.DE": "21Shares Bitcoin Core ETP" # A felhasználó kért neve
 }
 
 # --- FŐOLDAL ---
@@ -112,6 +136,7 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
 
     def col_val(v): return "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#aaa"
 
+    # Felső szürke box az indexekkel és devizákkal (ezresválasztó szóköz!)
     st.markdown(f"""
     <div style="background-color: #1e1e1e; padding: 15px 25px; border-radius: 10px; border: 1px solid #444; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 30px; align-items: center; justify-content: space-around;">
         <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">EUR/HUF</div><div style="font-size: 18px; font-weight: bold;">{eur_huf:,.2f} Ft</div></div>
@@ -125,7 +150,7 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
 
     rows = []
     
-    # Portfólió szintű aggregált értékekhez
+    # Portfólió szintű aggregált értékekhez (most, tegnap, 7d, 30d, ytd)
     tot_usd_now = 0
     tot_usd_prev = 0
     tot_usd_7d = 0
@@ -140,6 +165,7 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
         data = fetch_asset_history(ticker)
         if data:
             is_eur = ticker.endswith(".DE")
+            # Európai papírok esetén az ár és az idősor dollárosítása
             multiplier = eur_usd if is_eur else 1.0
             
             curr_val = data["curr"] * multiplier * db
@@ -154,17 +180,18 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
             tot_usd_30d += v_30d
             tot_usd_ytd += v_ytd
             
-            # Idősoros érték a portfólió charthoz
-            asset_history_usd = data["prices_series"] * multiplier * db
+            # Idősoros érték a portfólió charthoz (ffill() és outer join arobosztusabb kezelésért)
+            asset_history_usd = (data["prices_series"] * multiplier * db).ffill()
             if portfolio_history.empty:
                 portfolio_history = asset_history_usd.to_frame(name=ticker)
             else:
                 portfolio_history = portfolio_history.join(asset_history_usd.rename(ticker), how='outer')
 
-            final_name = RENAME_MAP.get(ticker, data["name"])
+            # Névcsere, ha a szótárban szerepel a tikker
+            final_name = CORRECT_NAME_RENAME_MAP.get(ticker, data["name"])
 
-            # 7 napos adatsor a sparkline-hoz
-            sparkline_data = data["prices_series"].tail(7).tolist()
+            # 7 napos adatsor a sparkline-hoz (csak az utolsó 7, vagy kevesebb)
+            sparkline_data = data["prices_series"].ffill().tail(7).tolist()
 
             rows.append({
                 "Név": final_name,
@@ -191,7 +218,7 @@ if rows:
     df = pd.DataFrame(rows)
     df["Portfólió hányad"] = (df["USD érték"] / tot_usd_now) * 100 if tot_usd_now > 0 else 0
 
-    # Teljes portfólió metrikák
+    # Teljes portfólió metrikák (számítás és színezés)
     pf_chg_day_pct = ((tot_usd_now - tot_usd_prev) / tot_usd_prev) * 100 if tot_usd_prev else 0
     pf_chg_day_usd = tot_usd_now - tot_usd_prev
     pf_chg_7d_pct = ((tot_usd_now - tot_usd_7d) / tot_usd_7d) * 100 if tot_usd_7d else 0
@@ -203,6 +230,7 @@ if rows:
 
     def fmt_c(v): return "green" if v > 0 else "red" if v < 0 else "gray"
 
+    # Fő Érték doboz (ezresválasztó szóköz, nyilacska nélkül, új teljes pf metrikák)
     st.markdown(f"""
     <div style="background-color: #1e1e1e; padding: 25px; border-radius: 10px; border: 1px solid #444; margin-bottom: 30px;">
         <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">Érték</div>
@@ -217,7 +245,7 @@ if rows:
     </div>
     """.replace(",", " "), unsafe_allow_html=True)
 
-    # Táblázat előkészítése
+    # Táblázat előkészítése (ezresválasztó szóköz!)
     disp = pd.DataFrame()
     disp["Név"] = df["Név"]
     disp["Ticker"] = df["Ticker"]
@@ -228,6 +256,7 @@ if rows:
     disp["USD érték"] = df["USD érték"]
     disp["Portfólió hányad"] = df["Portfólió hányad"]
     
+    # Új időszaki oszlopok a táblázatba (számok maradnak a rendezéshez)
     disp["Napi vált. %"] = df["Napi vált. %"]
     disp["Napi vált. USD"] = df["Napi vált. USD"]
     disp["7d %"] = df["7d %"]
@@ -240,7 +269,7 @@ if rows:
     # Sparkline adat beszúrása
     disp["7d Chart"] = df["7d Chart"]
 
-    # Formázók az st.dataframe-hez
+    # Formázók az st.dataframe-hez (USD formázás, ezresválasztó szóköz, sparkline)
     format_dict = {
         "USD érték": st.column_config.NumberColumn("USD érték", format="$ %.2f"),
         "Portfólió hányad": st.column_config.NumberColumn("Portfólió hányad", format="%.2f %%"),
@@ -255,26 +284,35 @@ if rows:
         "7d Chart": st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
     }
 
-    # Megjelenítés
+    # Színformázó függvény: piros mínusz, zöld plusz
+    def style_diff(v):
+        color = '#27ae60' if v > 0 else '#e74c3c' if v < 0 else 'white'
+        return f'color: {color}; font-weight: bold;'
+
     # Kiszámoljuk a pontos magasságot, hogy ne legyen görgetősáv (36 pixel / sor + fejléc)
     table_height = int((len(disp) + 1) * 36)
-    st.dataframe(disp, use_container_width=True, hide_index=True, column_config=format_dict, height=table_height)
 
-    # --- HISTORICAL CHART ---
+    # Megjelenítés (height paraméter beállítva a teljes listához, st.dataframe modern rendezése, színformázás!)
+    # Alkalmazom a színformázást az összes százalékos oszlopra a táblázatban
+    styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "7d %", "30d %", "YTD %"])
+    st.dataframe(styled_df, use_container_width=True, hide_index=True, height=table_height)
+
+    # --- HISTORICAL CHART (éves teljes pf USD grafikon) ---
     st.markdown("---")
     st.subheader("Portfólió teljes éves eredménye, USD")
     if not portfolio_history.empty:
-        portfolio_history.ffill(inplace=True) # Üres napok kitöltése előző értékkel
-        total_history = portfolio_history.sum(axis=1) # Sorok összeadása
+        # Tiszta történelmi adatsor készítése
+        portfolio_history_ffill = portfolio_history.ffill()
+        total_history = portfolio_history_ffill.sum(axis=1) # Sorok (eszközök) összeadása
         
-        # Plotly chart készítése
+        # Plotly chart készítése, napi beosztással
         fig_hist = px.line(x=total_history.index, y=total_history.values, 
                            labels={'x': 'Dátum', 'y': 'Érték (USD)'})
         fig_hist.update_traces(line_color='#27ae60')
         fig_hist.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                xaxis_title="", yaxis_title="USD",
                                hovermode="x unified")
-        # Interaktív időablak választó
+        # Interaktív időablak választó gombok (1m, 3m, 6m, YTD, 1y)
         fig_hist.update_xaxes(
             rangeselector=dict(
                 buttons=list([
@@ -289,13 +327,15 @@ if rows:
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- TORTADIAGRAM (Visszaállítva) ---
+    # --- TORTADIAGRAM (letisztított legendás változat) ---
     st.markdown("---")
     st.subheader("Portfólió diagram")
     fig_pie = px.pie(df, values='USD érték', names='Ticker', color_discrete_sequence=px.colors.qualitative.Pastel)
-    # Visszaállítva a vonalas, külső feliratos stílusra
-    fig_pie.update_traces(textinfo='label+percent', textposition='outside', marker=dict(line=dict(color='#000000', width=1)))
-    fig_pie.update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    # Eltávolítom a diagramon lévő feliratokat a zsúfoltság miatt, de bekapcsolom a legendát
+    fig_pie.update_traces(textinfo='none', marker=dict(line=dict(color='#000000', width=1)))
+    # A legenda elhelyezése és formázása
+    fig_pie.update_layout(showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                           legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.05))
     st.plotly_chart(fig_pie, use_container_width=True)
 
 else:
