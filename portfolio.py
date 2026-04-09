@@ -256,7 +256,9 @@ if rows:
     }
 
     # Megjelenítés
-    st.dataframe(disp, use_container_width=True, hide_index=True, column_config=format_dict, height=None) # height=None engedi a teljes listát
+    # Kiszámoljuk a pontos magasságot, hogy ne legyen görgetősáv (36 pixel / sor + fejléc)
+    table_height = int((len(disp) + 1) * 36)
+    st.dataframe(disp, use_container_width=True, hide_index=True, column_config=format_dict, height=table_height)
 
     # --- HISTORICAL CHART ---
     st.markdown("---")
