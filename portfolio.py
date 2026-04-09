@@ -9,13 +9,12 @@ HOLDINGS = st.secrets["darabszamok"]
 
 st.set_page_config(page_title="PORTFÓLIÓ KEZELŐ", layout="wide")
 
-# CSS: Letisztult, modern táblázat stílus
 st.markdown("""
     <style>
-    th, td { text-align: center !important; border-bottom: 1px solid #444 !important; padding: 12_px !important; }
+    th, td { text-align: center !important; border-bottom: 1px solid #444 !important; padding: 12px !important; }
     th { border-top: 1px solid #444 !important; background-color: #1e1e1e; font-weight: bold; }
     table { width: 100%; border-collapse: collapse; }
-    div[data-testid="stMetric"] { background-color: #1e1e1e; padding: 15_px; border-radius: 10_px; border: 1px solid #444; }
+    div[data-testid="stMetric"] { background-color: #1e1e1e; padding: 15px; border-radius: 10px; border: 1px solid #444; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -37,7 +36,7 @@ if not st.session_state.auth:
     st.warning("A hozzáférés korlátozott. Kérlek, add meg a jelszavad.")
     st.stop()
 
-# --- ADATLEKÉRDEZÉS ÉS KALKULÁCIÓ ---
+# --- ADATLEKÉRDEZÉS ---
 NAME_MAP = {
     "TSLA": "Tesla", "META": "Meta", "NVDA": "Nvidia", "GOOGL": "Google A",
     "MSTR": "MicroStrategy", "MSFT": "Microsoft", "AMZN": "Amazon",
@@ -49,30 +48,38 @@ NAME_MAP = {
 }
 
 @st.cache_data(ttl=600)
-def fetch_data(ticker):
+def fetch_safe_data(ticker):
     try:
         t = yf.Ticker(ticker)
-        # Gyors adatlekérés az árfolyamhoz
-        hist = t.history(period="5d")
+        # Árfolyam lekérése (period=1mo biztosabb az ETF-eknél)
+        hist = t.history(period="1mo")
         if hist.empty: return None
         
-        # Market Cap és név lekérése (lassabb, de kell)
-        info = t.info
+        # Market Cap külön try-ban, hogy ne rontsa el az árat
+        mcap = 0
+        try:
+            info = t.info
+            mcap = info.get('marketCap', info.get('totalAssets', 0))
+            if mcap is None: mcap = 0
+        except:
+            mcap = 0
+            
         return {
             "price": hist['Close'].iloc[-1],
             "prev": hist['Close'].iloc[-2],
-            "mcap": info.get('marketCap', 0)
+            "mcap": mcap
         }
-    except: return None
+    except:
+        return None
 
 st.title("SAJÁT PORTFÓLIÓ ÁLLAPOT")
 
 with st.spinner("Adatok szinkronizálása a piaccal..."):
-    # Deviza keresztárfolyamok
-    d_usd_huf = fetch_data("USDHUF=X")
-    d_eur_usd = fetch_data("EURUSD=X")
+    # Fix deviza lekérés
+    d_usd_huf = fetch_safe_data("USDHUF=X")
+    d_eur_usd = fetch_safe_data("EURUSD=X")
     
-    usd_huf = d_usd_huf["price"] if d_usd_huf else 360.0
+    usd_huf = d_usd_huf["price"] if d_usd_huf else 365.0
     eur_usd = d_eur_usd["price"] if d_eur_usd else 1.08
 
     rows = []
@@ -81,7 +88,7 @@ with st.spinner("Adatok szinkronizálása a piaccal..."):
     for ticker, db in HOLDINGS.items():
         if db <= 0: continue
         
-        data = fetch_data(ticker)
+        data = fetch_safe_data(ticker)
         if data:
             curr = data["price"]
             chg = ((curr - data["prev"]) / data["prev"]) * 100
@@ -110,14 +117,9 @@ with st.spinner("Adatok szinkronizálása a piaccal..."):
 if rows:
     df = pd.DataFrame(rows)
     
-    # Összesítő a lap tetején
-    c1, c2 = st.columns(2)
-    c1.metric("Teljes vagyon (USD)", f"${total_usd:,.0f}")
-    c2.metric("Teljes vagyon (HUF)", f"{(total_usd * usd_huf):,.0f} Ft")
-
+    st.metric("Teljes vagyon (USD)", f"${total_usd:,.0f}", delta=f"{(total_usd * usd_huf):,.0f} Ft", delta_color="off")
     st.markdown("---")
 
-    # Rendezés gombok
     ctrl1, ctrl2 = st.columns([2, 1])
     with ctrl1:
         sort_col = st.selectbox("Rendezés alapja:", ["Value USD", "Day change %", "Név"])
@@ -126,13 +128,12 @@ if rows:
 
     df = df.sort_values(by=sort_col, ascending=(sort_dir == "Növekvő"))
 
-    # Formázott táblázat összeállítása
+    # Formázott táblázat
     disp = pd.DataFrame()
     disp["Név"] = df["Név"]
     disp["Ticker"] = df["Ticker"]
     disp["Darab"] = df["Darab"].apply(lambda x: f"{x:,.4f}".rstrip('0').rstrip('.'))
     disp["Price"] = df.apply(lambda r: f"€{r['Price']:,.2f}" if r['is_eur'] else f"${r['Price']:,.2f}", axis=1)
-    disp["Market cap"] = df["Market cap"].apply(lambda x: f"${x/1e12:,.2f}T" if x >= 1e12 else (f"${x/1e9:,.2f}B" if x >= 1e8 else "-"))
     disp["Value USD"] = df["Value USD"].apply(lambda x: f"${x:,.2f}")
     disp["Value HUF"] = df["Value HUF"].apply(lambda x: f"{x:,.0f} Ft")
     disp["Day change %"] = df["Day change %"]
@@ -146,13 +147,11 @@ if rows:
     # --- TORTADIAGRAM ---
     st.markdown("---")
     st.subheader("Portfólió megoszlása")
-    # Pasztell színekkel 2D torta
     fig = px.pie(df, values='Value USD', names='Név', 
-                 color_discrete_sequence=px.colors.qualitative.Pastel,
-                 hole=0) # hole=0 -> 2D teljes torta
+                 color_discrete_sequence=px.colors.qualitative.Pastel)
     fig.update_traces(textinfo='percent+label', textposition='inside')
     fig.update_layout(showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.info("Nincs megjeleníthető adat. Ellenőrizd a darabszámokat a Secrets-ben!")
+    st.info("Nincs megjeleníthető adat. Ellenőrizd a darabszámokat!")
