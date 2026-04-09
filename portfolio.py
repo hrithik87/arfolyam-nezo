@@ -106,20 +106,12 @@ def fetch_asset_history(ticker):
         }
     except: return None
 
-# --- NÉV ÉS TIKKER CSERÉK, ÚJ INSTRUMENTUM ---
+# Névcsere szótár egyesítve és pontosítva
 NAME_RENAME_MAP = {
-    "VWCE.DE": "iShares MSCI World Small Cap UCITS ETF", # Hibás név a kódban, a JustETF alapján: "Vanguard FTSE All-World UCITS ETF"
-    "ZPRV.DE": "iShares MSCI USA Small Cap Value Factor UCITS ETF",
-    "IUSN.DE": "iShares MSCI World Small Cap UCITS ETF", # Ez a név maradhat
-    "CBTC.DE": "21Shares Core Bitcoin ETP" # Új név
-}
-
-# Javítom a korábbi hibámat, a névcsere szótárt pontosítom
-CORRECT_NAME_RENAME_MAP = {
     "VWCE.DE": "Vanguard FTSE All-World UCITS ETF (Dist)",
     "ZPRV.DE": "iShares MSCI USA Small Cap Value Factor UCITS ETF",
     "IUSN.DE": "iShares MSCI World Small Cap UCITS ETF",
-    "CBTC.DE": "21Shares Bitcoin Core ETP" # A felhasználó kért neve
+    "CBTC.DE": "21Shares Bitcoin Core ETP"
 }
 
 # --- FŐOLDAL ---
@@ -136,7 +128,7 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
 
     def col_val(v): return "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#aaa"
 
-    # Felső szürke box az indexekkel és devizákkal (ezresválasztó szóköz!)
+    # Felső szürke box az indexekkel és devizákkal
     st.markdown(f"""
     <div style="background-color: #1e1e1e; padding: 15px 25px; border-radius: 10px; border: 1px solid #444; margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 30px; align-items: center; justify-content: space-around;">
         <div style="text-align: center;"><div style="color: #aaa; font-size: 14px; margin-bottom: 5px;">EUR/HUF</div><div style="font-size: 18px; font-weight: bold;">{eur_huf:,.2f} Ft</div></div>
@@ -150,7 +142,7 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
 
     rows = []
     
-    # Portfólió szintű aggregált értékekhez (most, tegnap, 7d, 30d, ytd)
+    # Portfólió szintű aggregált értékekhez
     tot_usd_now = 0
     tot_usd_prev = 0
     tot_usd_7d = 0
@@ -180,17 +172,14 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
             tot_usd_30d += v_30d
             tot_usd_ytd += v_ytd
             
-            # Idősoros érték a portfólió charthoz (ffill() és outer join arobosztusabb kezelésért)
+            # Idősoros érték a portfólió charthoz
             asset_history_usd = (data["prices_series"] * multiplier * db).ffill()
             if portfolio_history.empty:
                 portfolio_history = asset_history_usd.to_frame(name=ticker)
             else:
                 portfolio_history = portfolio_history.join(asset_history_usd.rename(ticker), how='outer')
 
-            # Névcsere, ha a szótárban szerepel a tikker
-            final_name = CORRECT_NAME_RENAME_MAP.get(ticker, data["name"])
-
-            # 7 napos adatsor a sparkline-hoz (csak az utolsó 7, vagy kevesebb)
+            final_name = NAME_RENAME_MAP.get(ticker, data["name"])
             sparkline_data = data["prices_series"].ffill().tail(7).tolist()
 
             rows.append({
@@ -218,7 +207,6 @@ if rows:
     df = pd.DataFrame(rows)
     df["Portfólió hányad"] = (df["USD érték"] / tot_usd_now) * 100 if tot_usd_now > 0 else 0
 
-    # Teljes portfólió metrikák (számítás és színezés)
     pf_chg_day_pct = ((tot_usd_now - tot_usd_prev) / tot_usd_prev) * 100 if tot_usd_prev else 0
     pf_chg_day_usd = tot_usd_now - tot_usd_prev
     pf_chg_7d_pct = ((tot_usd_now - tot_usd_7d) / tot_usd_7d) * 100 if tot_usd_7d else 0
@@ -230,7 +218,6 @@ if rows:
 
     def fmt_c(v): return "green" if v > 0 else "red" if v < 0 else "gray"
 
-    # Fő Érték doboz (ezresválasztó szóköz, nyilacska nélkül, új teljes pf metrikák)
     st.markdown(f"""
     <div style="background-color: #1e1e1e; padding: 25px; border-radius: 10px; border: 1px solid #444; margin-bottom: 30px;">
         <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">Érték</div>
@@ -245,7 +232,6 @@ if rows:
     </div>
     """.replace(",", " "), unsafe_allow_html=True)
 
-    # Táblázat előkészítése (ezresválasztó szóköz!)
     disp = pd.DataFrame()
     disp["Név"] = df["Név"]
     disp["Ticker"] = df["Ticker"]
@@ -256,7 +242,6 @@ if rows:
     disp["USD érték"] = df["USD érték"]
     disp["Portfólió hányad"] = df["Portfólió hányad"]
     
-    # Új időszaki oszlopok a táblázatba (számok maradnak a rendezéshez)
     disp["Napi vált. %"] = df["Napi vált. %"]
     disp["Napi vált. USD"] = df["Napi vált. USD"]
     disp["7d %"] = df["7d %"]
@@ -265,11 +250,9 @@ if rows:
     disp["30d USD"] = df["30d USD"]
     disp["YTD %"] = df["YTD %"]
     disp["YTD USD"] = df["YTD USD"]
-    
-    # Sparkline adat beszúrása
     disp["7d Chart"] = df["7d Chart"]
 
-    # Formázók az st.dataframe-hez (USD formázás, ezresválasztó szóköz, sparkline)
+    # --- EZT A RÉSZT JAVÍTOTTAM (Streamlit Formázók) ---
     format_dict = {
         "USD érték": st.column_config.NumberColumn("USD érték", format="$ %.2f"),
         "Portfólió hányad": st.column_config.NumberColumn("Portfólió hányad", format="%.2f %%"),
@@ -284,35 +267,29 @@ if rows:
         "7d Chart": st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
     }
 
-    # Színformázó függvény: piros mínusz, zöld plusz
     def style_diff(v):
         color = '#27ae60' if v > 0 else '#e74c3c' if v < 0 else 'white'
         return f'color: {color}; font-weight: bold;'
 
-    # Kiszámoljuk a pontos magasságot, hogy ne legyen görgetősáv (36 pixel / sor + fejléc)
     table_height = int((len(disp) + 1) * 36)
 
-    # Megjelenítés (height paraméter beállítva a teljes listához, st.dataframe modern rendezése, színformázás!)
-    # Alkalmazom a színformázást az összes százalékos oszlopra a táblázatban
-    styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "7d %", "30d %", "YTD %"])
-    st.dataframe(styled_df, use_container_width=True, hide_index=True, height=table_height)
+    # --- EZT A RÉSZT JAVÍTOTTAM (Szétválasztás: Pandas szín -> Streamlit formátum) ---
+    styled_df = disp.style.map(style_diff, subset=["Napi vált. %", "7d %", "30d %", "YTD %"])
+    st.dataframe(styled_df, use_container_width=True, hide_index=True, column_config=format_dict, height=table_height)
 
-    # --- HISTORICAL CHART (éves teljes pf USD grafikon) ---
+    # --- HISTORICAL CHART ---
     st.markdown("---")
     st.subheader("Portfólió teljes éves eredménye, USD")
     if not portfolio_history.empty:
-        # Tiszta történelmi adatsor készítése
         portfolio_history_ffill = portfolio_history.ffill()
-        total_history = portfolio_history_ffill.sum(axis=1) # Sorok (eszközök) összeadása
+        total_history = portfolio_history_ffill.sum(axis=1)
         
-        # Plotly chart készítése, napi beosztással
         fig_hist = px.line(x=total_history.index, y=total_history.values, 
                            labels={'x': 'Dátum', 'y': 'Érték (USD)'})
         fig_hist.update_traces(line_color='#27ae60')
         fig_hist.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                xaxis_title="", yaxis_title="USD",
                                hovermode="x unified")
-        # Interaktív időablak választó gombok (1m, 3m, 6m, YTD, 1y)
         fig_hist.update_xaxes(
             rangeselector=dict(
                 buttons=list([
@@ -327,13 +304,11 @@ if rows:
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- TORTADIAGRAM (letisztított legendás változat) ---
+    # --- TORTADIAGRAM ---
     st.markdown("---")
     st.subheader("Portfólió diagram")
     fig_pie = px.pie(df, values='USD érték', names='Ticker', color_discrete_sequence=px.colors.qualitative.Pastel)
-    # Eltávolítom a diagramon lévő feliratokat a zsúfoltság miatt, de bekapcsolom a legendát
     fig_pie.update_traces(textinfo='none', marker=dict(line=dict(color='#000000', width=1)))
-    # A legenda elhelyezése és formázása
     fig_pie.update_layout(showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                            legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.05))
     st.plotly_chart(fig_pie, use_container_width=True)
