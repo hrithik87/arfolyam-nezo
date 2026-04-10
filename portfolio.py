@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import numpy as np
 
 # --- BEÁLLÍTÁSOK ÉS MEMÓRIA ---
 JELSZO = st.secrets["portfolio_jelszo"]
@@ -188,6 +189,7 @@ with st.spinner("Piac szinkronizálása és adatok letöltése..."):
                 "52w low": data["low52"],
                 "Market cap": data["mcap"],
                 "USD érték": curr_val,
+                "HUF érték": curr_val * usd_huf,  # <-- HUF érték visszatéve a számításba
                 "Napi vált. %": ((curr_val - prev_val) / prev_val) * 100 if prev_val else 0,
                 "Napi vált. USD": curr_val - prev_val,
                 "7d %": ((curr_val - v_7d) / v_7d) * 100 if v_7d else 0,
@@ -257,6 +259,7 @@ if rows:
     disp["Market cap"] = df["Market cap"].apply(lambda x: f"${x/1e12:,.2f}T".replace(",", " ") if x >= 1e12 else (f"${x/1e9:,.2f}B".replace(",", " ") if x >= 1e8 else "-"))
     
     disp["USD érték"] = df["USD érték"]
+    disp["HUF érték"] = df["HUF érték"]  # <-- HUF érték oszlop beillesztve
     disp["Portfólió hányad"] = df["Portfólió hányad"]
     disp["Napi vált. %"] = df["Napi vált. %"]
     disp["Napi vált. USD"] = df["Napi vált. USD"]
@@ -271,11 +274,13 @@ if rows:
     # Szóközös formázó függvények
     def fmt_usd(x): return f"${x:,.2f}".replace(",", " ").replace("$-", "-$")
     def fmt_usd_plus(x): return f"${x:+,.2f}".replace(",", " ").replace("$-", "-$").replace("$+", "+$")
+    def fmt_huf(x): return f"{x:,.0f} Ft".replace(",", " ") # <-- HUF formázó
     def fmt_pct(x): return f"{x:,.2f}%".replace(",", " ")
     def fmt_pct_plus(x): return f"{x:+,.2f}%".replace(",", " ")
 
     format_dict = {
         "USD érték": fmt_usd,
+        "HUF érték": fmt_huf, # <-- HUF formázó bekapcsolva
         "Portfólió hányad": fmt_pct,
         "Napi vált. %": fmt_pct_plus,
         "Napi vált. USD": fmt_usd_plus,
