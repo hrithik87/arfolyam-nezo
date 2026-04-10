@@ -1,41 +1,101 @@
 import streamlit as st
 import time
 
-# 1. Oldalbeállítások (Bara V.A. Dark Mode)
-st.set_page_config(page_title="A Lehullott Múzsa", page_icon="🥀", layout="centered")
+# --- OLDALBEÁLLÍTÁSOK ---
+st.set_page_config(
+    page_title="A Lehullott Múzsa | Bara V.A. Privát Rituálé",
+    page_icon="🥀",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
-# --- EGYEDI BARA V.A. STÍLUS (CSS) ---
+# --- BARA V.A. EXTRA VISUALS (ANIMÁLT HÁTTÉR ÉS CSS) ---
 st.markdown("""
     <style>
-    .stApp { background-color: #0E0E0E; color: #F5F5F5; font-family: 'Georgia', serif; }
-    /* Gombok stílusa */
+    /* Sötét Bordeaux / Fekete Vignette Háttér */
+    .stApp {
+        background: radial-gradient(circle at center, #2e0505 0%, #0a0101 100%);
+        color: #F5F5F5;
+        font-family: 'Georgia', serif;
+        overflow: hidden;
+    }
+
+    /* ANIMÁLT HULLÓ SZIRMOK */
+    .petal-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 0;
+    }
+    .petal {
+        position: absolute;
+        background-color: #7b0000;
+        opacity: 0.6;
+        border-radius: 50% 0 50% 50%;
+        animation: fall 10s linear infinite;
+    }
+    @keyframes fall {
+        0% { transform: translateY(-10%) rotate(0deg); }
+        100% { transform: translateY(110%) rotate(360deg); }
+    }
+    
+    /* Gombok / Kártyák stílusa */
     div.stButton > button {
         background-color: #1A1A1A; color: #F5F5F5; border: 1px solid #4A0404;
-        border-radius: 8px; width: 100%; height: 80px; font-weight: bold;
-        transition: 0.3s; font-size: 16px;
+        border-radius: 12px; width: 100%; height: 100px; font-weight: bold;
+        transition: 0.3s; font-size: 18px; margin-bottom: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
     div.stButton > button:hover {
         background-color: #4A0404; border-color: #8B0000; color: white;
-        transform: scale(1.02);
+        transform: scale(1.05); box-shadow: 0 8px 12px rgba(139,0,0,0.5);
     }
+
+    /* Szövegek stílusa */
+    h1, h2 { color: #8B0000 !important; text-align: center; }
+    h3 { color: #B22222 !important; font-style: italic; text-align: center; margin-bottom: 1.5em; }
+    .status-text { text-align: center; color: #888; font-style: italic; margin-bottom: 20px; font-size: 14px; }
+    .intro-text { text-align: center; font-size: 18px; line-height: 1.6; max-width: 600px; margin: 0 auto 2em auto; color: #dcdcdc; }
+
     /* Folyamatjelző */
     .stProgress > div > div > div > div { background-color: #8B0000; }
-    h1, h2, h3 { color: #8B0000 !important; text-align: center; }
-    .stSelectbox label, .stTextInput label { color: #8B0000 !important; font-weight: bold; }
-    .status-text { text-align: center; color: #666; font-style: italic; margin-bottom: 20px; }
     </style>
+    
+    <div class="petal-container">
+        <div class="petal" style="width: 10px; height: 10px; left: 10%; animation-delay: 1s;"></div>
+        <div class="petal" style="width: 15px; height: 15px; left: 30%; animation-delay: 3s;"></div>
+        <div class="petal" style="width: 8px; height: 8px; left: 50%; animation-delay: 5s;"></div>
+        <div class="petal" style="width: 12px; height: 12px; left: 70%; animation-delay: 2s;"></div>
+        <div class="petal" style="width: 14px; height: 14px; left: 90%; animation-delay: 4s;"></div>
+        <div class="petal" style="width: 11px; height: 11px; left: 20%; animation-delay: 6s;"></div>
+        <div class="petal" style="width: 13px; height: 13px; left: 60%; animation-delay: 8s;"></div>
+    </div>
 """, unsafe_allow_html=True)
 
-# 2. Hermetikus Jelszóvédelem
+# --- 1. JELSZÓVÉDELEM ÉS BELÉPŐ KÉPERNYŐ ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     if st.session_state["password_correct"]:
         return True
     
+    # Belépő Bevezető Szöveg (Bara V.A. Vibe)
     st.markdown("<h1>🥀 A Lehullott Múzsa</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='status-text'>Belépés csak íróknak és démonoknak.</p>", unsafe_allow_html=True)
-    jelszo = st.text_input("Jelszó:", type="password")
+    st.markdown("<h3>Ismerd meg az elméd sötét oldalát.</h3>", unsafe_allow_html=True)
+    st.markdown("""
+        <div class="intro-text">
+            Üdvözöllek a szentélyben. A külvilág zaja itt elnémul.<br>
+            A szavak talán elhagytak, de a látomásod még él.<br>
+            Ez a rituálé arra való, hogy felébredjen benned a Lehullott Múzsa.<br>
+            Kövesd a lépéseket, hozz döntéseket, és adj hangot a benned lakozó káosznak.
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<p class='status-text'>A folytatáshoz bizonyítsd inkognitódat!</p>", unsafe_allow_html=True)
+    jelszo = st.text_input("Mester-Kriptográfus Jelszó:", type="password", key="pwd_input")
     if jelszo:
         if jelszo == st.secrets["app_password"]:
             st.session_state["password_correct"] = True
@@ -51,11 +111,10 @@ if check_password():
     if 'answers' not in st.session_state:
         st.session_state.answers = {}
 
-    # --- AUDIO MODUL ---
+    # --- AUDIO MODUL (Háttérzaj a rituáléhoz) ---
     st.sidebar.markdown("### 🎧 Atmoszféra")
-    # Sejtelmes háttérzaj (eső + zongora jellegű audio link)
     st.sidebar.audio("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3")
-    st.sidebar.info("Indítsd el a hangot a rituáléhoz!")
+    st.sidebar.info("Indítsd el a hangot a teljes rituális élményhez!")
 
     # FOLYAMATJELZŐ
     progress_val = st.session_state.step / 16
@@ -64,88 +123,16 @@ if check_password():
 
     # --- A 16 LÉPCSŐS RITUÁLÉ (4 opcióval) ---
     
+    # A 16 lépcső konkrét adatai (4 opcióval)
+    # Az emojis karaktereket standard Unicode formára írtuk át
     steps = {
         1: ("Vizuális Alap (A kép lelke)", ["🌑 Mélyfekete Nihil", "🍷 Borvörös Melankólia", "🌫️ Hamuszürke Köd", "🕯️ Aranybarna Gyertyafény"]),
         2: ("Uralkodó Textúra", ["📜 Ódon, szakadt papír", "🪞 Tükörcserép", "🥀 Száradt szirom", "⛓️ Hideg láncok"]),
-        3: ("Belső Hang (Zenei vibe)", ["🎹 Magányos zongora", "🎻 Sikoltó hegedű", "⛈️ Távoli dörgés", "🤫 Nyomasztó csend"]),
+        3: ("Belső Hang (Zenei vibe)", ["🎹 Magányos zongora", "🎻 Sikoltó hegedű", "⛈️ Tá Távoli dörgés", "🤫 Nyomasztó csend"]),
         4: ("Írói Gyónás (A mai bűnöd)", ["🪦 Ma mindenkit megölök", "🎭 Elvesztem a maszk mögött", "🧩 Csak kódokat látok", "☕ Túl sok kávé, nulla szó"]),
         5: ("Karakter-sors", ["🔥 Lassú égés", "🔪 Hirtelen árulás", "🧠 Mentális összeomlás", "🖤 Megváltó halál"]),
         6: ("A Szimbólum", ["🗝️ Véres kulcs", "🐦 Döglött holló", "🖼️ Üres képkeret", "💍 Elvesztett gyűrű"]),
         7: ("Célpont (Kihez szólunk?)", ["🤝 A hűséges olvasók", "👀 A néma figyelők", "👺 A belső démonok", "🌍 A közönyös világ"]),
-        8: ("Aktuális érzelem", ["🧊 Megfagyott nihil", "🌋 Fojtott düh", "🌊 Sötét vágyakozás", "🍂 Fáradt beletörődés"]),
+        8: ("Aktuális érzelem", ["🧊 Megfagyott nihil", "🌋 Fojtott düh", "🌊 Sötét sötét vágyakozás", "🍂 Fáradt beletörődés"]),
         9: ("Az Akadály", ["🚧 Plot hole (Szakadék)", "💤 Motivációhiány", "📱 A külvilág zaja", "🖋️ Öngyűlölet"]),
-        10: ("Domináns Szín", ["🔴 Alvadt vér", "⚫ Éjfekete", "⚪ Csontfehér", "🟣 Sötétlila"]),
-        11: ("Írói Klisé (Amit ma utálunk)", ["💘 Szerelmi háromszög", "🦄 Happy end", "⚡ Kiválasztott hős", "⏳ Cliffhanger"]),
-        12: ("Titoktartási Szint", ["🕵️ Teljes inkognitó", "🎭 Elejtett utalások", "📂 Kiszivárgott részlet", "📢 Nyers őszinteség"]),
-        13: ("Poszt Hangvétele", ["🖋️ Költői & Elvont", "🐍 Maróan szarkasztikus", "🔪 Rövid & Ideges", "🧠 Hideg & Logikus"]),
-        14: ("Vizuális Stílus", ["🎥 Cinematic (Filmes)", "🎞️ Grainy (Szemcsés/Régi)", "🔳 Minimalista", "🎨 Szürreális"]),
-        15: ("CTA (A végső lökés)", ["❓ Provokatív kérdés", "🥀 Csendes kérés", "⚠️ Figyelmeztetés", "🚪 Távozás angolosan"]),
-        # A 16. lépés speciális (Input mező)
-    }
-
-    if st.session_state.step <= 15:
-        title, options = steps[st.session_state.step]
-        st.subheader(f"{st.session_state.step}. {title}")
-        
-        # 4 gombos elrendezés
-        cols = st.columns(2)
-        for i, opt in enumerate(options):
-            with cols[i % 2]:
-                if st.button(opt):
-                    st.session_state.answers[f"step_{st.session_state.step}"] = opt
-                    st.session_state.step += 1
-                    st.rerun()
-
-    elif st.session_state.step == 16:
-        st.subheader("16. Külvilág-Misszió (Trend-vadászat)")
-        st.info("Görgess 5-öt az Instán/TikTokon, vagy nézd meg a híreket. Mi a legfurább/legnépszerűbb dolog?")
-        trend_input = st.text_input("Írd be a külső ingert:", placeholder="Pl. Szakított az álompár / Mindenki sminkvideót néz...")
-        
-        col_prev, col_gen = st.columns(2)
-        with col_prev:
-            if st.button("← Vissza"):
-                st.session_state.step -= 1
-                st.rerun()
-        with col_gen:
-            if st.button("🔥 GENERÁLÁS"):
-                if trend_input:
-                    st.session_state.answers['trend'] = trend_input
-                    st.session_state.step += 1
-                    st.rerun()
-                else:
-                    st.warning("A rituáléhoz szükség van a külvilág zajára is!")
-
-    # --- VÉGEREDMÉNY GENERÁLÁSA ---
-    if st.session_state.step > 16:
-        st.subheader("🥀 A rituálé beteljesedett")
-        
-        with st.spinner("A Lehullott Múzsa összefűzi a sötétséget..."):
-            time.sleep(3)
-            
-            # Adatok kinyerése
-            vibe = st.session_state.answers.get('step_1', '')
-            gyon = st.session_state.answers.get('step_4', '')
-            trend = st.session_state.answers.get('trend', '')
-            stilus = st.session_state.answers.get('step_13', '')
-            
-            # Komplexebb Híd logika (Példa)
-            poszt_text = f"Míg kint a világ olyan felszínes dolgokon pörög, mint a '{trend}', addig én itt bent a saját démonaimmal küzdök. {gyon} \n\nA {vibe.lower()} hangulata rátelepedett a billentyűzetemre. Talán a valóság csak egy rossz díszlet az én történetemhez. \n\nTi is érzitek a szakadékot a hírek és a saját belső világotok között? 🥀👇"
-            
-            prompt_text = f"Dark academia, cinematic style, {st.session_state.answers.get('step_14', '')}. Subject: {st.session_state.answers.get('step_6', '')} in a {st.session_state.answers.get('step_10', '')} environment. Texture: {st.session_state.answers.get('step_2', '')}. Mood: {st.session_state.answers.get('step_8', '')}. High contrast, moody lighting, 8k resolution, photorealistic."
-
-        st.markdown("### 📝 A Poszt szövege")
-        st.text_area("Másold ki:", value=poszt_text, height=200)
-        
-        st.markdown("### 🎨 Nano Banana 2 Kép Prompt")
-        st.code(prompt_text, language="text")
-        
-        if st.button("🔄 Új rituálé kezdése"):
-            st.session_state.step = 1
-            st.session_state.answers = {}
-            st.rerun()
-
-    # Navigációs gomb vissza (ha nem a végén vagyunk)
-    if 1 < st.session_state.step <= 15:
-        if st.button("← Előző lépés módosítása"):
-            st.session_state.step -= 1
-            st.rerun()
+        10: ("Domináns Szín", ["🔴
