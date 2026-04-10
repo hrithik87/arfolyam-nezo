@@ -3,7 +3,6 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-import numpy as np
 
 # --- BEÁLLÍTÁSOK ÉS MEMÓRIA ---
 JELSZO = st.secrets["portfolio_jelszo"]
@@ -97,18 +96,19 @@ def fetch_asset_history(ticker):
         }
     except: return None
 
-# Névcsere a te pontos elvárásaid alapján
+# Névcsere a pontos elvárások alapján
 NAME_RENAME_MAP = {
     "VWCE.DE": "FTSE All-World ETF",
     "ZPRV.DE": "MSCI USA Small Cap Value ETF",
     "IUSN.DE": "MSCI World Small Cap ETF",
-    "CBTC.DE": "21shares Bitcoin Core ETP"
+    "CBTC.DE": "21shares Bitcoin Core ETP",
+    "21BC.DE": "21shares Bitcoin Core ETP"
 }
 
 # --- FŐOLDAL ---
 st.title("SAJÁT PORTFÓLIÓ")
 
-with st.spinner("Piac szinkronizálása és történelmi adatok letöltése..."):
+with st.spinner("Piac szinkronizálása és adatok letöltése..."):
     glob = fetch_global_data()
     eur_huf = glob.get("EURHUF=X", {}).get("price", 395.0)
     usd_huf = glob.get("USDHUF=X", {}).get("price", 365.0)
@@ -149,9 +149,13 @@ with st.spinner("Piac szinkronizálása és történelmi adatok letöltése...")
 
     for ticker, db in HOLDINGS.items():
         if db <= 0: continue
-        data = fetch_asset_history(ticker)
+        
+        # Tikker átirányítás a Yahoo Finance anomália miatt
+        yahoo_ticker = "21BC.DE" if ticker == "CBTC.DE" else ticker
+        
+        data = fetch_asset_history(yahoo_ticker)
         if data:
-            is_eur = ticker.endswith(".DE")
+            is_eur = yahoo_ticker.endswith(".DE")
             multiplier = eur_usd if is_eur else 1.0
             
             curr_val = data["curr"] * multiplier * db
@@ -211,12 +215,11 @@ if rows:
 
     def fmt_c(v): return "green" if v > 0 else "red" if v < 0 else "gray"
 
-    # Biztonságos string formázás az Érték dobozhoz
     str_tot_usd = f"{tot_usd_now:,.0f}".replace(",", " ")
     str_tot_huf = f"{(tot_usd_now * usd_huf):,.0f}".replace(",", " ")
     
     str_day_pct = f"{pf_chg_day_pct:+.2f}".replace(",", " ")
-    str_day_usd = f"{pf_chg_day_usd:+,.0f}".replace(",", " ").replace("-", "") # A mínuszt manuálisan kezeljük
+    str_day_usd = f"{pf_chg_day_usd:+,.0f}".replace(",", " ").replace("-", "") 
     sign_day_usd = "-" if pf_chg_day_usd < 0 else "+"
 
     str_7d_pct = f"{pf_chg_7d_pct:+.2f}".replace(",", " ")
@@ -245,7 +248,6 @@ if rows:
     </div>
     """, unsafe_allow_html=True)
 
-    # Táblázat oszlopok szétválogatása: Stringek (fix formátumúak) és Nyers Számok (szortírozáshoz)
     disp = pd.DataFrame()
     disp["Név"] = df["Név"]
     disp["Ticker"] = df["Ticker"]
@@ -266,7 +268,7 @@ if rows:
     disp["YTD USD"] = df["YTD USD"]
     disp["7d Chart"] = df["7d Chart"]
 
-    # Szóközös formázó függvények a nyers számokhoz (Pandas Styler számára)
+    # Szóközös formázó függvények
     def fmt_usd(x): return f"${x:,.2f}".replace(",", " ").replace("$-", "-$")
     def fmt_usd_plus(x): return f"${x:+,.2f}".replace(",", " ").replace("$-", "-$").replace("$+", "+$")
     def fmt_pct(x): return f"{x:,.2f}%".replace(",", " ")
@@ -289,16 +291,14 @@ if rows:
         color = '#27ae60' if v > 0 else '#e74c3c' if v < 0 else 'white'
         return f'color: {color}; font-weight: bold;'
 
-    # A Pandas intézi a színezést és a nyers számok szóközös szöveggé alakítását (így a sorrendezés működni fog)
-    styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "7d %", "30d %", "YTD %"])
+    styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "Napi vált. USD", "7d %", "7d USD", "30d %", "30d USD", "YTD %", "YTD USD"])
 
-    # Streamlit oszlop beállítások: KÖZÉPRE IGAZÍTÁS MINDENHOL, Sparkline generálása
-    col_cfg = {col: st.column_config.Column(alignment="center") for col in disp.columns}
+    # Streamlit oszlop beállítások: KÖZÉPRE IGAZÍTÁS MINDENHOL
+    col_cfg = {col: st.column_config.Column(alignment="center") for col in disp.columns if col != "7d Chart"}
     col_cfg["7d Chart"] = st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
 
     table_height = int((len(disp) + 1) * 36)
 
-    # A kész táblázat kirajzolása
     st.dataframe(styled_df, use_container_width=True, hide_index=True, column_config=col_cfg, height=table_height)
 
     # --- HISTORICAL CHART ---
