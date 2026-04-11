@@ -48,6 +48,8 @@ def fetch_global_data():
                 prev = float(hist['Close'].iloc[-2])
                 chg = ((curr - prev) / prev) * 100
                 data[t] = {"price": curr, "chg": chg}
+            else:
+                data[t] = {"price": 0, "chg": 0}
         except:
             data[t] = {"price": 0, "chg": 0}
     return data
@@ -66,10 +68,18 @@ def fetch_asset_history(ticker):
             
         if len(prices) < 2: return None
 
-        info = t.info
-        name = info.get('shortName', info.get('longName', ticker))
-        mcap = info.get('marketCap', info.get('totalAssets', 0))
-        low52 = info.get('fiftyTwoWeekLow', 0)
+        # --- YFINANCE BLOKKOLÁS VÉDELEM ---
+        name = ticker
+        mcap = 0
+        low52 = 0
+        try:
+            info = t.info
+            if info:
+                name = info.get('shortName', info.get('longName', ticker))
+                mcap = info.get('marketCap', info.get('totalAssets', 0))
+                low52 = info.get('fiftyTwoWeekLow', 0)
+        except:
+            pass # Ha a Yahoo blokkolja az infót, csendben továbbmegyünk
 
         curr_price = float(prices.iloc[-1])
         prev_price = float(prices.iloc[-2])
@@ -97,13 +107,31 @@ def fetch_asset_history(ticker):
         }
     except: return None
 
-# Névcsere a pontos elvárások alapján
+# A garantált név-szótár: ETF-ek + Részvények
 NAME_RENAME_MAP = {
     "VWCE.DE": "FTSE All-World ETF",
     "ZPRV.DE": "MSCI USA Small Cap Value ETF",
     "IUSN.DE": "MSCI World Small Cap ETF",
     "CBTC.DE": "21shares Bitcoin Core ETP",
-    "21BC.DE": "21shares Bitcoin Core ETP"
+    "21BC.DE": "21shares Bitcoin Core ETP",
+    "TSLA": "Tesla, Inc.",
+    "MSFT": "Microsoft Corporation",
+    "META": "Meta Platforms, Inc.",
+    "MSTR": "MicroStrategy Inc.",
+    "ADBE": "Adobe Inc.",
+    "SNOW": "Snowflake Inc.",
+    "NVDA": "NVIDIA Corporation",
+    "SE": "Sea Limited",
+    "MELI": "MercadoLibre, Inc.",
+    "TROW": "T. Rowe Price Group, Inc.",
+    "WBD": "Warner Bros. Discovery, Inc.",
+    "ENPH": "Enphase Energy, Inc.",
+    "MARA": "MARA Holdings, Inc.",
+    "PLNH": "Planet 13 Holdings Inc.",
+    "ONL": "Orion Properties Inc.",
+    "AMZN": "Amazon.com, Inc.",
+    "AMD": "Advanced Micro Devices, Inc.",
+    "GOOGL": "Alphabet Inc."
 }
 
 # --- FŐOLDAL ---
@@ -111,8 +139,13 @@ st.title("SAJÁT PORTFÓLIÓ")
 
 with st.spinner("Piac szinkronizálása és adatok letöltése..."):
     glob = fetch_global_data()
+    
     eur_huf = glob.get("EURHUF=X", {}).get("price", 395.0)
     usd_huf = glob.get("USDHUF=X", {}).get("price", 365.0)
+    # Védelem, hogy sose írjon ki 0.00 Ft-ot, ha a Yahoo nem ad devizaadatot
+    if eur_huf <= 0: eur_huf = 395.0
+    if usd_huf <= 0: usd_huf = 365.0
+    
     eur_usd = glob.get("EURUSD=X", {}).get("price", 1.08)
     sp_chg = glob.get("^GSPC", {}).get("chg", 0)
     ndq_chg = glob.get("^IXIC", {}).get("chg", 0)
@@ -189,7 +222,7 @@ with st.spinner("Piac szinkronizálása és adatok letöltése..."):
                 "52w low": data["low52"],
                 "Market cap": data["mcap"],
                 "USD érték": curr_val,
-                "HUF érték": curr_val * usd_huf,  # <-- HUF érték visszatéve a számításba
+                "HUF érték": curr_val * usd_huf,  
                 "Napi vált. %": ((curr_val - prev_val) / prev_val) * 100 if prev_val else 0,
                 "Napi vált. USD": curr_val - prev_val,
                 "7d %": ((curr_val - v_7d) / v_7d) * 100 if v_7d else 0,
@@ -259,7 +292,7 @@ if rows:
     disp["Market cap"] = df["Market cap"].apply(lambda x: f"${x/1e12:,.2f}T".replace(",", " ") if x >= 1e12 else (f"${x/1e9:,.2f}B".replace(",", " ") if x >= 1e8 else "-"))
     
     disp["USD érték"] = df["USD érték"]
-    disp["HUF érték"] = df["HUF érték"]  # <-- HUF érték oszlop beillesztve
+    disp["HUF érték"] = df["HUF érték"]
     disp["Portfólió hányad"] = df["Portfólió hányad"]
     disp["Napi vált. %"] = df["Napi vált. %"]
     disp["Napi vált. USD"] = df["Napi vált. USD"]
@@ -271,16 +304,15 @@ if rows:
     disp["YTD USD"] = df["YTD USD"]
     disp["7d Chart"] = df["7d Chart"]
 
-    # Szóközös formázó függvények
     def fmt_usd(x): return f"${x:,.2f}".replace(",", " ").replace("$-", "-$")
     def fmt_usd_plus(x): return f"${x:+,.2f}".replace(",", " ").replace("$-", "-$").replace("$+", "+$")
-    def fmt_huf(x): return f"{x:,.0f} Ft".replace(",", " ") # <-- HUF formázó
+    def fmt_huf(x): return f"{x:,.0f} Ft".replace(",", " ")
     def fmt_pct(x): return f"{x:,.2f}%".replace(",", " ")
     def fmt_pct_plus(x): return f"{x:+,.2f}%".replace(",", " ")
 
     format_dict = {
         "USD érték": fmt_usd,
-        "HUF érték": fmt_huf, # <-- HUF formázó bekapcsolva
+        "HUF érték": fmt_huf,
         "Portfólió hányad": fmt_pct,
         "Napi vált. %": fmt_pct_plus,
         "Napi vált. USD": fmt_usd_plus,
@@ -298,7 +330,6 @@ if rows:
 
     styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "Napi vált. USD", "7d %", "7d USD", "30d %", "30d USD", "YTD %", "YTD USD"])
 
-    # Streamlit oszlop beállítások: KÖZÉPRE IGAZÍTÁS MINDENHOL
     col_cfg = {col: st.column_config.Column(alignment="center") for col in disp.columns if col != "7d Chart"}
     col_cfg["7d Chart"] = st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
 
