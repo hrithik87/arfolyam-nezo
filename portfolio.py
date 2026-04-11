@@ -65,7 +65,6 @@ NAME_RENAME_MAP = {
     "IUSN.DE": "MSCI World Small Cap ETF",
     "WBD": "Warner Bros. Discovery, Inc. -",
     "PLNH": "Planet 13 Holdings Inc.",
-    "PLNHF": "Planet 13 Holdings Inc.",
     "ONL": "Orion Properties Inc.",
     "CBTC.DE": "21shares Bitcoin Core ETP",
     "21BC.DE": "21shares Bitcoin Core ETP"
@@ -74,18 +73,14 @@ NAME_RENAME_MAP = {
 # --- FŐOLDAL ---
 st.title("SAJÁT PORTFÓLIÓ")
 
-with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
+with st.spinner("Piac szinkronizálása..."):
     valid_tickers = []
     db_map = {}
     
     for ticker, db in HOLDINGS.items():
         if db <= 0: continue
-        # Ticker korrekciók
-        yt = ticker
-        if ticker == "CBTC.DE": yt = "21BC.DE"
-        # A Yahoo sokszor a PLNHF tikkert ismeri a Planet 13-hoz
-        elif ticker == "PLNH": yt = "PLNHF" 
-        
+        # Csak a Bitcoint kell átirányítani, a PLNH marad PLNH!
+        yt = "21BC.DE" if ticker == "CBTC.DE" else ticker
         valid_tickers.append(yt)
         db_map[yt] = db
         
@@ -160,22 +155,19 @@ with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
     for yt, db in db_map.items():
         s = pd.Series(dtype=float)
         
-        # 1. Normál eset: benne van a csomagban
+        # 1. Próbálkozás a letöltött csomagból
         if yt in closes.columns:
             s = closes[yt].dropna()
             
-        # 2. Védőháló: ha a Yahoo kidobta a csomagból (pl. PLNHF), egyenként behúzzuk
+        # 2. Erősített védőháló: Ha a Yahoo kihagyta (mint a PLNH-t), egyesével lekérjük a történelmét!
         if len(s) < 2:
             try:
-                fb_t = yf.Ticker(yt, session=get_safe_session())
-                cp = float(fb_t.fast_info.get('lastPrice', 0))
-                pp = float(fb_t.fast_info.get('previousClose', cp))
-                if cp > 0:
-                    dates = pd.date_range(end=pd.Timestamp.today(), periods=7)
-                    s = pd.Series([pp]*6 + [cp], index=dates)
+                fb_hist = yf.Ticker(yt, session=get_safe_session()).history(period="1mo")
+                if not fb_hist.empty and 'Close' in fb_hist.columns:
+                    s = fb_hist['Close'].dropna()
             except: pass
 
-        # 3. Végső fallback: ha abszolút nincs adat, a sor akkor is megmarad 0-s értékkel!
+        # 3. Végső fallback: ha így is vak, 0 értékkel bekerül (ne tűnjön el)
         if len(s) < 2:
             dates = pd.date_range(end=pd.Timestamp.today(), periods=2)
             s = pd.Series([0.0, 0.0], index=dates)
@@ -217,8 +209,7 @@ with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
         final_name = NAME_RENAME_MAP.get(yt, yt)
         sparkline_data = s.ffill().tail(7).tolist()
         
-        # Eredeti Ticker visszaalakítása a megjelenítéshez
-        display_ticker = "CBTC.DE" if yt == "21BC.DE" else ("PLNH" if yt == "PLNHF" else yt)
+        display_ticker = "CBTC.DE" if yt == "21BC.DE" else yt
 
         rows.append({
             "Név": final_name,
@@ -335,17 +326,15 @@ if rows:
 
     styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "Napi vált. USD", "7d %", "7d USD", "30d %", "30d USD", "YTD %", "YTD USD"])
 
-    # ERŐSZAKOS KÖZÉPRE IGAZÍTÁS (NÉV oszlop is!)
-    col_cfg = {
-        "Név": st.column_config.TextColumn("Név", alignment="center"),
-        "Ticker": st.column_config.TextColumn("Ticker", alignment="center"),
-    }
-    for col in disp.columns:
-        if col not in col_cfg:
-            if col == "7d Chart":
-                col_cfg[col] = st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
-            else:
-                col_cfg[col] = st.column_config.Column(alignment="center")
+    # --- KÖZÉPRE IGAZÍTÁS KIKÉNYSZERÍTÉSE PANDAS STYLER-REL ---
+    styled_df = styled_df.set_properties(**{'text-align': 'center'})
+    styled_df = styled_df.set_table_styles([
+        dict(selector='th', props=[('text-align', 'center !important')]),
+        dict(selector='td', props=[('text-align', 'center !important')])
+    ])
+
+    col_cfg = {col: st.column_config.Column(alignment="center") for col in disp.columns if col != "7d Chart"}
+    col_cfg["7d Chart"] = st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
 
     table_height = int((len(disp) + 1) * 36)
 
