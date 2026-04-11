@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import numpy as np
+import requests
 
 # --- BEÁLLÍTÁSOK ÉS MEMÓRIA ---
 JELSZO = st.secrets["portfolio_jelszo"]
@@ -35,14 +36,23 @@ if not st.session_state.auth:
     st.warning("A hozzáférés korlátozott. Kérlek, add meg a jelszavad.")
     st.stop()
 
+# Álcázott Session a blokkolások elkerülésére
+def get_safe_session():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    return session
+
 # --- ADATLEKÉRDEZÉS ---
 @st.cache_data(ttl=600)
 def fetch_global_data():
     tickers = ["EURHUF=X", "USDHUF=X", "EURUSD=X", "^GSPC", "^IXIC", "^RUT"]
     data = {}
+    session = get_safe_session()
     for t in tickers:
         try:
-            hist = yf.Ticker(t).history(period="5d")
+            hist = yf.Ticker(t, session=session).history(period="5d")
             if len(hist) >= 2:
                 curr = float(hist['Close'].iloc[-1])
                 prev = float(hist['Close'].iloc[-2])
@@ -57,29 +67,43 @@ def fetch_global_data():
 @st.cache_data(ttl=1200) 
 def fetch_asset_history(ticker):
     try:
-        t = yf.Ticker(ticker)
-        hist = t.history(period="1y")
-        if hist.empty: return None
+        session = get_safe_session()
+        t = yf.Ticker(ticker, session=session)
         
-        if isinstance(hist.columns, pd.MultiIndex):
-            prices = hist['Close'][ticker].dropna()
+        # 1. Próbálkozás: Normál history lekérés
+        hist = t.history(period="1y")
+        
+        if hist.empty:
+            # 2. Próbálkozás: Közvetlen letöltés (API blokk esetén gyakran átmegy)
+            dl = yf.download(ticker, period="1y", progress=False)
+            if not dl.empty:
+                if isinstance(dl.columns, pd.MultiIndex):
+                    prices = dl['Close'][ticker].dropna()
+                else:
+                    prices = dl['Close'].dropna()
+            else:
+                # 3. Végső Fallback: Ha minden kötél szakad, legalább az aktuális árat megkapjuk
+                curr_price = float(t.fast_info.get('lastPrice', 0))
+                if curr_price == 0: return None
+                prev_price = float(t.fast_info.get('previousClose', curr_price))
+                dates = pd.date_range(end=pd.Timestamp.today(), periods=2)
+                prices = pd.Series([prev_price, curr_price], index=dates)
         else:
-            prices = hist['Close'].dropna()
-            
+            if isinstance(hist.columns, pd.MultiIndex):
+                prices = hist['Close'][ticker].dropna()
+            else:
+                prices = hist['Close'].dropna()
+                
         if len(prices) < 2: return None
 
-        # --- YFINANCE BLOKKOLÁS VÉDELEM ---
-        name = ticker
+        # Gyors és hibatűrő mcap/low52 lekérés (nevek lekérése teljesen törölve!)
         mcap = 0
         low52 = 0
         try:
-            info = t.info
-            if info:
-                name = info.get('shortName', info.get('longName', ticker))
-                mcap = info.get('marketCap', info.get('totalAssets', 0))
-                low52 = info.get('fiftyTwoWeekLow', 0)
+            mcap = t.fast_info.get('marketCap', 0)
+            low52 = t.fast_info.get('yearLow', 0)
         except:
-            pass # Ha a Yahoo blokkolja az infót, csendben továbbmegyünk
+            pass
 
         curr_price = float(prices.iloc[-1])
         prev_price = float(prices.iloc[-2])
@@ -95,43 +119,44 @@ def fetch_asset_history(ticker):
         price_ytd = float(ytd_prices.iloc[0]) if not ytd_prices.empty else float(prices.iloc[0])
 
         return {
-            "name": name,
+            "name": ticker, # Itt már csak a tikkert adjuk át, a név a lenti szótárból jön
             "prices_series": prices,
             "curr": curr_price,
             "prev": prev_price,
             "p_7d": price_7d,
             "p_30d": price_30d,
             "p_ytd": price_ytd,
-            "mcap": mcap if mcap else 0,
-            "low52": low52 if low52 else 0
+            "mcap": mcap,
+            "low52": low52
         }
     except: return None
 
-# A garantált név-szótár: ETF-ek + Részvények
+# --- A TELJESEN BEÉGETETT NÉV-SZÓTÁR ---
+# Ez az egyetlen forrása a neveknek. A Yahoo-t nem kérdezzük erről.
 NAME_RENAME_MAP = {
     "VWCE.DE": "FTSE All-World ETF",
     "ZPRV.DE": "MSCI USA Small Cap Value ETF",
-    "IUSN.DE": "MSCI World Small Cap ETF",
-    "CBTC.DE": "21shares Bitcoin Core ETP",
-    "21BC.DE": "21shares Bitcoin Core ETP",
-    "TSLA": "Tesla, Inc.",
-    "MSFT": "Microsoft Corporation",
-    "META": "Meta Platforms, Inc.",
-    "MSTR": "MicroStrategy Inc.",
-    "ADBE": "Adobe Inc.",
-    "SNOW": "Snowflake Inc.",
+    "MSTR": "Strategy Inc",
     "NVDA": "NVIDIA Corporation",
-    "SE": "Sea Limited",
     "MELI": "MercadoLibre, Inc.",
-    "TROW": "T. Rowe Price Group, Inc.",
-    "WBD": "Warner Bros. Discovery, Inc.",
-    "ENPH": "Enphase Energy, Inc.",
+    "META": "Meta Platforms, Inc.",
+    "MSFT": "Microsoft Corporation",
+    "GOOGL": "Alphabet Inc.",
+    "TSLA": "Tesla, Inc.",
+    "AMD": "Advanced Micro Devices, Inc.",
+    "AMZN": "Amazon.com, Inc.",
     "MARA": "MARA Holdings, Inc.",
+    "SE": "Sea Limited",
+    "ADBE": "Adobe Inc.",
+    "TROW": "T. Rowe Price Group, Inc.",
+    "SNOW": "Snowflake Inc.",
+    "ENPH": "Enphase Energy, Inc.",
+    "IUSN.DE": "MSCI World Small Cap ETF",
+    "WBD": "Warner Bros. Discovery, Inc. -",
     "PLNH": "Planet 13 Holdings Inc.",
     "ONL": "Orion Properties Inc.",
-    "AMZN": "Amazon.com, Inc.",
-    "AMD": "Advanced Micro Devices, Inc.",
-    "GOOGL": "Alphabet Inc."
+    "CBTC.DE": "21shares Bitcoin Core ETP",
+    "21BC.DE": "21shares Bitcoin Core ETP"
 }
 
 # --- FŐOLDAL ---
@@ -139,21 +164,21 @@ st.title("SAJÁT PORTFÓLIÓ")
 
 with st.spinner("Piac szinkronizálása és adatok letöltése..."):
     glob = fetch_global_data()
-    
     eur_huf = glob.get("EURHUF=X", {}).get("price", 395.0)
     usd_huf = glob.get("USDHUF=X", {}).get("price", 365.0)
-    # Védelem, hogy sose írjon ki 0.00 Ft-ot, ha a Yahoo nem ad devizaadatot
+    
     if eur_huf <= 0: eur_huf = 395.0
     if usd_huf <= 0: usd_huf = 365.0
     
     eur_usd = glob.get("EURUSD=X", {}).get("price", 1.08)
+    if eur_usd <= 0: eur_usd = 1.08
+    
     sp_chg = glob.get("^GSPC", {}).get("chg", 0)
     ndq_chg = glob.get("^IXIC", {}).get("chg", 0)
     rut_chg = glob.get("^RUT", {}).get("chg", 0)
 
     def col_val(v): return "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#aaa"
 
-    # Felső szürke box - Formázott számokkal, szóközös ezresválasztóval
     str_eur_huf = f"{eur_huf:,.2f}".replace(",", " ")
     str_usd_huf = f"{usd_huf:,.2f}".replace(",", " ")
     str_sp_chg = f"{sp_chg:+.2f}".replace(",", " ")
@@ -184,7 +209,6 @@ with st.spinner("Piac szinkronizálása és adatok letöltése..."):
     for ticker, db in HOLDINGS.items():
         if db <= 0: continue
         
-        # Tikker átirányítás a Yahoo Finance anomália miatt
         yahoo_ticker = "21BC.DE" if ticker == "CBTC.DE" else ticker
         
         data = fetch_asset_history(yahoo_ticker)
@@ -210,7 +234,8 @@ with st.spinner("Piac szinkronizálása és adatok letöltése..."):
             else:
                 portfolio_history = portfolio_history.join(asset_history_usd.rename(ticker), how='outer')
 
-            final_name = NAME_RENAME_MAP.get(ticker, data["name"])
+            # Végleges név hozzárendelése kizárólag a beégetett listából
+            final_name = NAME_RENAME_MAP.get(ticker, ticker)
             sparkline_data = data["prices_series"].ffill().tail(7).tolist()
 
             rows.append({
@@ -222,7 +247,7 @@ with st.spinner("Piac szinkronizálása és adatok letöltése..."):
                 "52w low": data["low52"],
                 "Market cap": data["mcap"],
                 "USD érték": curr_val,
-                "HUF érték": curr_val * usd_huf,  
+                "HUF érték": curr_val * usd_huf,
                 "Napi vált. %": ((curr_val - prev_val) / prev_val) * 100 if prev_val else 0,
                 "Napi vált. USD": curr_val - prev_val,
                 "7d %": ((curr_val - v_7d) / v_7d) * 100 if v_7d else 0,
