@@ -3,6 +3,8 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import numpy as np
+import requests
 
 # --- BEÁLLÍTÁSOK ÉS MEMÓRIA ---
 JELSZO = st.secrets["portfolio_jelszo"]
@@ -34,6 +36,13 @@ if not st.session_state.auth:
     st.warning("A hozzáférés korlátozott. Kérlek, add meg a jelszavad.")
     st.stop()
 
+def get_safe_session():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    return session
+
 # --- A TELJESEN BEÉGETETT NÉV-SZÓTÁR ---
 NAME_RENAME_MAP = {
     "VWCE.DE": "FTSE All-World ETF",
@@ -56,6 +65,7 @@ NAME_RENAME_MAP = {
     "IUSN.DE": "MSCI World Small Cap ETF",
     "WBD": "Warner Bros. Discovery, Inc. -",
     "PLNH": "Planet 13 Holdings Inc.",
+    "PLNHF": "Planet 13 Holdings Inc.",
     "ONL": "Orion Properties Inc.",
     "CBTC.DE": "21shares Bitcoin Core ETP",
     "21BC.DE": "21shares Bitcoin Core ETP"
@@ -65,19 +75,23 @@ NAME_RENAME_MAP = {
 st.title("SAJÁT PORTFÓLIÓ")
 
 with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
-    # 1. Összegyűjtjük az összes tikkert, amit le kell tölteni
     valid_tickers = []
     db_map = {}
+    
     for ticker, db in HOLDINGS.items():
         if db <= 0: continue
-        yt = "21BC.DE" if ticker == "CBTC.DE" else ticker
+        # Ticker korrekciók
+        yt = ticker
+        if ticker == "CBTC.DE": yt = "21BC.DE"
+        # A Yahoo sokszor a PLNHF tikkert ismeri a Planet 13-hoz
+        elif ticker == "PLNH": yt = "PLNHF" 
+        
         valid_tickers.append(yt)
         db_map[yt] = db
         
     global_tickers = ["EURHUF=X", "USDHUF=X", "EURUSD=X", "^GSPC", "^IXIC", "^RUT"]
     all_tickers_to_download = list(set(valid_tickers + global_tickers))
 
-    # 2. EGYETLEN LÖVÉS: Minden adat letöltése egyszerre (1 API hívás)
     try:
         raw_data = yf.download(all_tickers_to_download, period="1y", progress=False)
         if raw_data.empty or 'Close' not in raw_data:
@@ -85,30 +99,35 @@ with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
             st.stop()
             
         closes = raw_data['Close']
-        # Ha valamiért csak 1 elem jönne le, Series-t kapunk, csinálunk belőle DataFrame-et
         if isinstance(closes, pd.Series):
             closes = closes.to_frame(name=all_tickers_to_download[0])
     except Exception as e:
         st.error(f"Kritikus hiba a letöltésnél: {e}")
         st.stop()
 
-    # 3. Globális adatok kinyerése a csomagból
     def get_last_price(t, default):
         try:
-            s = closes[t].dropna()
-            return float(s.iloc[-1]) if not s.empty else default
+            if t in closes.columns:
+                s = closes[t].dropna()
+                return float(s.iloc[-1]) if not s.empty else default
+            return default
         except: return default
 
     def get_chg(t):
         try:
-            s = closes[t].dropna()
-            if len(s) >= 2: return float(((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2]) * 100)
+            if t in closes.columns:
+                s = closes[t].dropna()
+                if len(s) >= 2: return float(((s.iloc[-1] - s.iloc[-2]) / s.iloc[-2]) * 100)
         except: pass
         return 0.0
 
     eur_huf = get_last_price("EURHUF=X", 395.0)
     usd_huf = get_last_price("USDHUF=X", 365.0)
     eur_usd = get_last_price("EURUSD=X", 1.08)
+    
+    if eur_huf <= 0: eur_huf = 395.0
+    if usd_huf <= 0: usd_huf = 365.0
+    if eur_usd <= 0: eur_usd = 1.08
     
     sp_chg = get_chg("^GSPC")
     ndq_chg = get_chg("^IXIC")
@@ -138,19 +157,35 @@ with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
     portfolio_history = pd.DataFrame()
     current_year = datetime.now().year
 
-    # 4. Portfólió feldolgozása a már letöltött adatcsomagból
     for yt, db in db_map.items():
-        if yt not in closes.columns: continue
+        s = pd.Series(dtype=float)
         
-        s = closes[yt].dropna()
-        if len(s) < 2: continue
+        # 1. Normál eset: benne van a csomagban
+        if yt in closes.columns:
+            s = closes[yt].dropna()
+            
+        # 2. Védőháló: ha a Yahoo kidobta a csomagból (pl. PLNHF), egyenként behúzzuk
+        if len(s) < 2:
+            try:
+                fb_t = yf.Ticker(yt, session=get_safe_session())
+                cp = float(fb_t.fast_info.get('lastPrice', 0))
+                pp = float(fb_t.fast_info.get('previousClose', cp))
+                if cp > 0:
+                    dates = pd.date_range(end=pd.Timestamp.today(), periods=7)
+                    s = pd.Series([pp]*6 + [cp], index=dates)
+            except: pass
+
+        # 3. Végső fallback: ha abszolút nincs adat, a sor akkor is megmarad 0-s értékkel!
+        if len(s) < 2:
+            dates = pd.date_range(end=pd.Timestamp.today(), periods=2)
+            s = pd.Series([0.0, 0.0], index=dates)
 
         is_eur = yt.endswith(".DE")
         multiplier = eur_usd if is_eur else 1.0
         
         curr_price = float(s.iloc[-1])
         prev_price = float(s.iloc[-2])
-        low52 = float(s.min()) # Saját számítás a letöltött 1 éves adatokból
+        low52 = float(s.min()) if curr_price > 0 else 0.0
         
         p_7d_idx = -7 if len(s) >= 7 else 0
         price_7d = float(s.iloc[p_7d_idx])
@@ -181,8 +216,9 @@ with st.spinner("Sniper mód: Egyetlen csomagban töltjük le a piacot..."):
 
         final_name = NAME_RENAME_MAP.get(yt, yt)
         sparkline_data = s.ffill().tail(7).tolist()
-        # Visszaalakítjuk az eredeti tikkert a CBTC.DE miatt a kiíráshoz
-        display_ticker = "CBTC.DE" if yt == "21BC.DE" else yt
+        
+        # Eredeti Ticker visszaalakítása a megjelenítéshez
+        display_ticker = "CBTC.DE" if yt == "21BC.DE" else ("PLNH" if yt == "PLNHF" else yt)
 
         rows.append({
             "Név": final_name,
@@ -258,7 +294,7 @@ if rows:
     disp["Ticker"] = df["Ticker"]
     disp["Darab"] = df["Darab"].apply(lambda x: f"{x:,.4f}".replace(",", " ").rstrip('0').rstrip('.'))
     disp["Árfolyam"] = df.apply(lambda r: f"{'€' if r['is_eur'] else '$'}{r['Árfolyam']:,.2f}".replace(",", " "), axis=1)
-    disp["52w low"] = df.apply(lambda r: f"{'€' if r['is_eur'] else '$'}{r['52w low']:,.2f}".replace(",", " "), axis=1)
+    disp["52w low"] = df.apply(lambda r: f"{'€' if r['is_eur'] else '$'}{r['52w low']:,.2f}".replace(",", " ") if r['52w low'] > 0 else "-", axis=1)
     
     disp["USD érték"] = df["USD érték"]
     disp["HUF érték"] = df["HUF érték"]
@@ -299,8 +335,17 @@ if rows:
 
     styled_df = disp.style.format(format_dict).map(style_diff, subset=["Napi vált. %", "Napi vált. USD", "7d %", "7d USD", "30d %", "30d USD", "YTD %", "YTD USD"])
 
-    col_cfg = {col: st.column_config.Column(alignment="center") for col in disp.columns if col != "7d Chart"}
-    col_cfg["7d Chart"] = st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
+    # ERŐSZAKOS KÖZÉPRE IGAZÍTÁS (NÉV oszlop is!)
+    col_cfg = {
+        "Név": st.column_config.TextColumn("Név", alignment="center"),
+        "Ticker": st.column_config.TextColumn("Ticker", alignment="center"),
+    }
+    for col in disp.columns:
+        if col not in col_cfg:
+            if col == "7d Chart":
+                col_cfg[col] = st.column_config.LineChartColumn("7d Chart", y_min=None, y_max=None)
+            else:
+                col_cfg[col] = st.column_config.Column(alignment="center")
 
     table_height = int((len(disp) + 1) * 36)
 
