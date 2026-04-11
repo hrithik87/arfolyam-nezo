@@ -161,6 +161,7 @@ NAME_RENAME_MAP = {
 
 # --- FŐOLDAL ---
 st.title("SAJÁT PORTFÓLIÓ")
+st.warning(f"RÖNTGEN: {len(HOLDINGS)} db részvényt látok a széfben.")
 
 with st.spinner("Piac szinkronizálása és adatok letöltése..."):
     glob = fetch_global_data()
